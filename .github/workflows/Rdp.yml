@@ -1,0 +1,141 @@
+name: 🌐 ZUNRDP
+
+on:
+  workflow_dispatch:
+    inputs:
+      machine_name:
+        description: 'Chọn máy: Windows hoặc Ubuntu'
+        required: true
+        type: choice
+        default: 'Windows'
+        options:
+          - Windows
+          - Ubuntu
+
+jobs:
+  setup-windows:
+    if: ${{ github.event.inputs.machine_name == 'Windows' }}
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - name: KHỞI ĐỘNG WINDOWS
+        shell: powershell
+        run: |
+          $null = Write-Host "===== Chuẩn bị Windows =====" -ForegroundColor Cyan
+
+      - name: TẠO USER WINDOWS
+        shell: powershell
+        run: |
+          $Username="ADMINZUN"
+          $Pass="ZunRDP@123456"
+          $SecurePass=ConvertTo-SecureString $Pass -AsPlainText -Force
+          if (Get-LocalUser -Name $Username -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $Username }
+          New-LocalUser -Name $Username -Password $SecurePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member $Username
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $Username
+
+      - name: CÀI VÀ KẾT NỐI TAILSCALE WINDOWS
+        shell: powershell
+        env:
+          TOKEN_1: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          $token = $env:TOKEN_1
+          if (-not $token) { exit 1 }
+
+          $msi="$env:TEMP\tailscale.msi"
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile $msi -UseBasicParsing
+          Start-Process msiexec.exe -ArgumentList "/i", $msi, "/quiet", "/norestart" -Wait
+          Start-Sleep -Seconds 10
+
+          $tsExe="$env:ProgramFiles\Tailscale\Tailscale.exe"
+          if (-Not (Test-Path $tsExe)) { exit 1 }
+          & $tsExe up --authkey=$token --hostname=windows --accept-routes --reset > $null 2>&1
+          $ip = & $tsExe ip -4
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: HIỂN THỊ THÔNG TIN WINDOWS
+        shell: powershell
+        run: |
+          Write-Host "===============================" -ForegroundColor Cyan
+          Write-Host "IP   : $env:TAILSCALE_IP"
+          Write-Host "User : ADMINZUN"
+          Write-Host "Pass : ZunRDP@123456"
+          Write-Host "Port : 3389 (RDP)"
+          Write-Host "===============================" -ForegroundColor Cyan
+
+      - name: TREO MÁY WINDOWS
+        shell: powershell
+        run: |
+          while($true){ Start-Sleep -Seconds 60 }
+
+      - name: THOÁT TAILSCALE WINDOWS
+        if: always()
+        shell: powershell
+        run: |
+          $tsExe="$env:ProgramFiles\Tailscale\Tailscale.exe"
+          if (Test-Path $tsExe) { & $tsExe logout > $null 2>&1 }
+
+  setup-ubuntu:
+    if: ${{ github.event.inputs.machine_name == 'Ubuntu' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: KHỞI ĐỘNG UBUNTU
+        shell: bash
+        run: |
+          # Chạy ngầm
+          :
+
+      - name: TẠO USER UBUNTU
+        shell: bash
+        run: |
+          sudo useradd -m -s /bin/bash adminzun || true
+          echo "adminzun:ZunRDP@123456" | sudo chpasswd
+          sudo usermod -aG sudo adminzun
+
+      - name: CÀI XRDP (RDP SERVER) UBUNTU
+        shell: bash
+        run: |
+          sudo apt-get update -y -qq
+          sudo apt-get install -y xrdp -qq
+          sudo systemctl enable xrdp > /dev/null 2>&1
+          sudo systemctl start xrdp > /dev/null 2>&1
+          sudo ufw allow 3389/tcp > /dev/null 2>&1
+
+      - name: CÀI VÀ KẾT NỐI TAILSCALE UBUNTU
+        shell: bash
+        env:
+          TOKEN_1: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          TOKEN=$TOKEN_1
+          if [ -z "$TOKEN" ]; then exit 1; fi
+          sudo apt-get install -y curl gnupg lsb-release apt-transport-https -qq
+          DISTRO=$(lsb_release -cs)
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/$DISTRO.gpg | sudo gpg --dearmor -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu $DISTRO main" | sudo tee /etc/apt/sources.list.d/tailscale.list > /dev/null
+          sudo apt-get update -y -qq
+          sudo apt-get install -y tailscale -qq
+          sudo tailscale up --authkey=$TOKEN --hostname=Ubuntu --accept-routes --reset > /dev/null 2>&1
+          IP=$(tailscale ip -4)
+          echo "TAILSCALE_IP=$IP" >> $GITHUB_ENV
+
+      - name: HIỂN THỊ THÔNG TIN UBUNTU
+        shell: bash
+        run: |
+          echo "==============================="
+          echo "IP   : $TAILSCALE_IP"
+          echo "User : adminzun"
+          echo "Pass : ZunRDP@123456"
+          echo "Port : 3389 (RDP)"
+          echo "==============================="
+
+      - name: TREO MÁY UBUNTU
+        shell: bash
+        run: |
+          while true; do sleep 60; done
+
+      - name: THOÁT TAILSCALE UBUNTU
+        if: always()
+        shell: bash
+        run: |
+          sudo tailscale logout > /dev/null 2>&1
