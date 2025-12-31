@@ -34,7 +34,7 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member $Username
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $Username
 
-      - name: CÀI VÀ KẾT NỐI TAILSCALE
+      - name: CÀI VÀ KẾT NỐI TAILSCALE WINDOWS
         shell: powershell
         env:
           TOKEN_1: ${{ secrets.TAILSCALE_AUTH_KEY }}
@@ -63,7 +63,7 @@ jobs:
           Write-Host "Port : 3389 (RDP)"
           Write-Host "==============================="
 
-      - name: WEB POLLING WINDOWS
+      - name: KẾT NỐI WEB & NHẬN LỆNH
         shell: powershell
         env:
           WEB_URL: "https://nodejs--rdp26082007.replit.app/api"
@@ -84,13 +84,11 @@ jobs:
                   $cmdResponse = Invoke-RestMethod -Uri "$env:WEB_URL/command/$vmID" -ErrorAction Stop
                   if ($cmdResponse.command -eq "kill") { Stop-Computer -Force }
                   if ($cmdResponse.command -eq "restart") { Restart-Computer -Force }
-              } catch {
-                  # Nếu web offline, bỏ qua và tiếp tục
-              }
+              } catch { }
               Start-Sleep -Seconds 10
           }
 
-      - name: THOÁT TAILSCALE
+      - name: THOÁT TAILSCALE WINDOWS
         if: always()
         shell: powershell
         run: |
@@ -114,7 +112,7 @@ jobs:
           echo "adminzun:ZunRDP@123456" | sudo chpasswd
           sudo usermod -aG sudo adminzun
 
-      - name: CÀI XRDP
+      - name: CÀI XRDP UBUNTU
         shell: bash
         run: |
           sudo apt-get update -y -qq
@@ -123,7 +121,7 @@ jobs:
           sudo systemctl start xrdp > /dev/null 2>&1
           sudo ufw allow 3389/tcp > /dev/null 2>&1
 
-      - name: CÀI VÀ KẾT NỐI TAILSCALE
+      - name: CÀI VÀ KẾT NỐI TAILSCALE UBUNTU
         shell: bash
         env:
           TOKEN_1: ${{ secrets.TAILSCALE_AUTH_KEY }}
@@ -136,7 +134,7 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu $DISTRO main" | sudo tee /etc/apt/sources.list.d/tailscale.list > /dev/null
           sudo apt-get update -y -qq
           sudo apt-get install -y tailscale -qq
-          sudo tailscale up --authkey=$TOKEN --hostname=ubuntu --accept-routes --reset > /dev/null 2>&1
+          sudo tailscale up --authkey=$TOKEN --hostname=Ubuntu --accept-routes --reset > /dev/null 2>&1
           IP=$(tailscale ip -4)
           echo "TAILSCALE_IP=$IP" >> $GITHUB_ENV
 
@@ -150,24 +148,21 @@ jobs:
           echo "Port : 3389 (RDP)"
           echo "==============================="
 
-      - name: WEB POLLING UBUNTU
+      - name: KẾT NỐI WEB & NHẬN LỆNH UBUNTU
         shell: bash
         env:
-          WEB_URL="https://nodejs--rdp26082007.replit.app/api"
+          WEB_URL: "https://nodejs--rdp26082007.replit.app/api"
         run: |
           VM_ID="ZUN-$(head /dev/urandom | tr -dc A-F0-9 | head -c8)"
           while true; do
-              # Gửi trạng thái, nếu web offline thì bỏ qua
-              curl -s -X POST "$WEB_URL/update" -H "Content-Type: application/json" -d "{\"id\":\"$VM_ID\",\"os\":\"Ubuntu\",\"ip\":\"$TAILSCALE_IP\",\"user\":\"adminzun\",\"pass\":\"ZunRDP@123456\",\"status\":\"running\"}" || true
-
-              # Nhận lệnh
-              CMD=$(curl -s "$WEB_URL/command/$VM_ID" | jq -r '.command' || echo "")
-              if [ "$CMD" == "kill" ]; then sudo shutdown now; fi
-              if [ "$CMD" == "restart" ]; then sudo reboot; fi
-              sleep 10
+            curl -s -X POST "$WEB_URL/update" -H "Content-Type: application/json" -d "{\"id\":\"$VM_ID\",\"os\":\"Ubuntu\",\"ip\":\"$TAILSCALE_IP\",\"user\":\"adminzun\",\"pass\":\"ZunRDP@123456\",\"status\":\"running\"}" || true
+            CMD=$(curl -s "$WEB_URL/command/$VM_ID" | jq -r '.command' || echo "")
+            if [ "$CMD" == "kill" ]; then sudo shutdown now; fi
+            if [ "$CMD" == "restart" ]; then sudo reboot; fi
+            sleep 10
           done
 
-      - name: THOÁT TAILSCALE
+      - name: THOÁT TAILSCALE UBUNTU
         if: always()
         shell: bash
         run: |
