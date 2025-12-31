@@ -1,4 +1,4 @@
-name: ZUNRDP
+name: 🌐 ZUNRDP
 
 on:
   workflow_dispatch:
@@ -21,8 +21,11 @@ jobs:
       - name: KHỞI ĐỘNG WINDOWS
         shell: powershell
         run: |
-          $VM_ID = "ZUN-" + -join ((65..90) + (48..57) | Get-Random -Count 6 | % {[char]$_})
-          $env:VM_ID = $VM_ID
+          $null = Write-Host "===== Chuẩn bị Windows ====="
+
+      - name: TẠO USER WINDOWS
+        shell: powershell
+        run: |
           $Username="ADMINZUN"
           $Pass="ZunRDP@123456"
           $SecurePass=ConvertTo-SecureString $Pass -AsPlainText -Force
@@ -37,36 +40,57 @@ jobs:
           TOKEN_1: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |
           $token = $env:TOKEN_1
+          if (-not $token) { exit 1 }
+
           $msi="$env:TEMP\tailscale.msi"
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile $msi -UseBasicParsing
           Start-Process msiexec.exe -ArgumentList "/i", $msi, "/quiet", "/norestart" -Wait
           Start-Sleep -Seconds 10
-          $tsExe="$env:ProgramFiles\Tailscale\Tailscale.exe"
-          & $tsExe up --authkey=$token --hostname=$env:VM_ID --accept-routes --reset > $null 2>&1
-          $ip = & $tsExe ip -4
-          $env:TAILSCALE_IP = $ip
 
-      - name: GỬI THÔNG TIN LÊN WEB
+          $tsExe="$env:ProgramFiles\Tailscale\Tailscale.exe"
+          if (-Not (Test-Path $tsExe)) { exit 1 }
+          & $tsExe up --authkey=$token --hostname=windows --accept-routes --reset > $null 2>&1
+          $ip = & $tsExe ip -4
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: HIỂN THỊ THÔNG TIN WINDOWS
+        shell: powershell
+        run: |
+          Write-Host "==============================="
+          Write-Host "IP   : $env:TAILSCALE_IP"
+          Write-Host "User : ADMINZUN"
+          Write-Host "Pass : ZunRDP@123456"
+          Write-Host "Port : 3389 (RDP)"
+          Write-Host "==============================="
+
+      - name: WEB POLLING WINDOWS
         shell: powershell
         env:
-          WEB_ENDPOINT: ${{ secrets.WEB_ENDPOINT }}  # https://yourweb.com/api/update
+          WEB_URL: "https://nodejs--rdp26082007.replit.app/api"
         run: |
-          $body = @{
-            id = $env:VM_ID
-            ip = $env:TAILSCALE_IP
-            user = "ADMINZUN"
-            pass = "ZunRDP@123456"
-            os = "Windows"
-            status = "running"
-          } | ConvertTo-Json
-          Invoke-RestMethod -Uri $env:WEB_ENDPOINT -Method Post -Body $body -ContentType "application/json"
+          $vmID = "ZUN-" + [guid]::NewGuid().ToString().Substring(0,8)
+          while ($true) {
+              try {
+                  $data = @{
+                      id = $vmID
+                      os = "Windows"
+                      ip = $env:TAILSCALE_IP
+                      user = "ADMINZUN"
+                      pass = "ZunRDP@123456"
+                      status = "running"
+                  } | ConvertTo-Json
+                  Invoke-RestMethod -Uri "$env:WEB_URL/update" -Method Post -Body $data -ContentType "application/json" -ErrorAction Stop
 
-      - name: TREO MÁY WINDOWS
-        shell: powershell
-        run: |
-          while($true){ Start-Sleep -Seconds 60 }
+                  $cmdResponse = Invoke-RestMethod -Uri "$env:WEB_URL/command/$vmID" -ErrorAction Stop
+                  if ($cmdResponse.command -eq "kill") { Stop-Computer -Force }
+                  if ($cmdResponse.command -eq "restart") { Restart-Computer -Force }
+              } catch {
+                  # Nếu web offline, bỏ qua và tiếp tục
+              }
+              Start-Sleep -Seconds 10
+          }
 
-      - name: THOÁT TAILSCALE WINDOWS
+      - name: THOÁT TAILSCALE
         if: always()
         shell: powershell
         run: |
@@ -81,8 +105,7 @@ jobs:
       - name: KHỞI ĐỘNG UBUNTU
         shell: bash
         run: |
-          VM_ID="ZUN-$(head /dev/urandom | tr -dc A-Z0-9 | head -c 6)"
-          export VM_ID
+          :
 
       - name: TẠO USER UBUNTU
         shell: bash
@@ -91,37 +114,60 @@ jobs:
           echo "adminzun:ZunRDP@123456" | sudo chpasswd
           sudo usermod -aG sudo adminzun
 
-      - name: CÀI XRDP VÀ TAILSCALE
+      - name: CÀI XRDP
+        shell: bash
+        run: |
+          sudo apt-get update -y -qq
+          sudo apt-get install -y xrdp -qq
+          sudo systemctl enable xrdp > /dev/null 2>&1
+          sudo systemctl start xrdp > /dev/null 2>&1
+          sudo ufw allow 3389/tcp > /dev/null 2>&1
+
+      - name: CÀI VÀ KẾT NỐI TAILSCALE
         shell: bash
         env:
           TOKEN_1: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |
-          sudo apt-get update -y -qq
-          sudo apt-get install -y xrdp curl gnupg lsb-release apt-transport-https -qq
+          TOKEN=$TOKEN_1
+          if [ -z "$TOKEN" ]; then exit 1; fi
+          sudo apt-get install -y curl gnupg lsb-release apt-transport-https -qq
           DISTRO=$(lsb_release -cs)
           curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/$DISTRO.gpg | sudo gpg --dearmor -o /usr/share/keyrings/tailscale-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu $DISTRO main" | sudo tee /etc/apt/sources.list.d/tailscale.list > /dev/null
           sudo apt-get update -y -qq
           sudo apt-get install -y tailscale -qq
-          sudo tailscale up --authkey=$TOKEN_1 --hostname=$VM_ID --accept-routes --reset > /dev/null 2>&1
+          sudo tailscale up --authkey=$TOKEN --hostname=ubuntu --accept-routes --reset > /dev/null 2>&1
           IP=$(tailscale ip -4)
-          export TAILSCALE_IP=$IP
+          echo "TAILSCALE_IP=$IP" >> $GITHUB_ENV
 
-      - name: GỬI THÔNG TIN LÊN WEB
+      - name: HIỂN THỊ THÔNG TIN UBUNTU
+        shell: bash
+        run: |
+          echo "==============================="
+          echo "IP   : $TAILSCALE_IP"
+          echo "User : adminzun"
+          echo "Pass : ZunRDP@123456"
+          echo "Port : 3389 (RDP)"
+          echo "==============================="
+
+      - name: WEB POLLING UBUNTU
         shell: bash
         env:
-          WEB_ENDPOINT: ${{ secrets.WEB_ENDPOINT }}
+          WEB_URL="https://nodejs--rdp26082007.replit.app/api"
         run: |
-          curl -s -X POST -H "Content-Type: application/json" \
-          -d "{\"id\":\"$VM_ID\",\"ip\":\"$TAILSCALE_IP\",\"user\":\"adminzun\",\"pass\":\"ZunRDP@123456\",\"os\":\"Ubuntu\",\"status\":\"running\"}" \
-          $WEB_ENDPOINT > /dev/null
+          VM_ID="ZUN-$(head /dev/urandom | tr -dc A-F0-9 | head -c8)"
+          while true; do
+              # Gửi trạng thái, nếu web offline thì bỏ qua
+              curl -s -X POST "$WEB_URL/update" -H "Content-Type: application/json" -d "{\"id\":\"$VM_ID\",\"os\":\"Ubuntu\",\"ip\":\"$TAILSCALE_IP\",\"user\":\"adminzun\",\"pass\":\"ZunRDP@123456\",\"status\":\"running\"}" || true
 
-      - name: TREO MÁY UBUNTU
-        shell: bash
-        run: |
-          while true; do sleep 60; done
+              # Nhận lệnh
+              CMD=$(curl -s "$WEB_URL/command/$VM_ID" | jq -r '.command' || echo "")
+              if [ "$CMD" == "kill" ]; then sudo shutdown now; fi
+              if [ "$CMD" == "restart" ]; then sudo reboot; fi
+              sleep 10
+          done
 
-      - name: THOÁT TAILSCALE UBUNTU
+      - name: THOÁT TAILSCALE
         if: always()
         shell: bash
         run: |
